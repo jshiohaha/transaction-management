@@ -1,0 +1,16 @@
+{
+  "name": "transaction-management",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "git@github.com:jshiohaha/transaction-management.git",
+  "author": "shio 🚀 <jlshiohira23@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@solana/web3.js": "^1.91.4",
+    "bs58": "^5.0.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/bs58": "^4.0.4"
+  }
+}
