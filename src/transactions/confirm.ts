@@ -75,7 +75,7 @@ export const awaitTransactionSignatureConfirmation = async ({
   config,
   onTransactionEvent,
   controller: _controller,
-  transactionCommitment
+  transactionCommitment,
 }: {
   connection: Connection;
   transactionId: TransactionSignature;
@@ -94,8 +94,14 @@ export const awaitTransactionSignatureConfirmation = async ({
     config?.initialConfirmationCommitment ??
     connection.commitment ??
     DEFAULT_COMMITMENT;
-  const requiredConfirmationLevels = config?.requiredConfirmationLevels ?? ["confirmed"];
+  const requiredConfirmationLevels = config?.requiredConfirmationLevels ?? [
+    "confirmed",
+  ];
 
+  console.log(
+    "subscriptionConfirmationCommitment: ",
+    subscriptionConfirmationCommitment
+  );
   onTransactionEvent({
     type: "confirm",
     phase: "pending",
@@ -111,7 +117,7 @@ export const awaitTransactionSignatureConfirmation = async ({
         config,
         controller,
         reject,
-        transactionCommitment
+        transactionCommitment,
       });
 
     await new Promise(async (innerResolve, _) => {
@@ -182,6 +188,9 @@ export const awaitTransactionSignatureConfirmation = async ({
         );
 
         log("[WebSocket] Setup connection for transaction ", transactionId);
+        controller.signal.addEventListener("abort", () => {
+          cleanupSubscription(connection, subscriptionId);
+        });
       } catch (err: any) {
         // note: at the moment, no event callback invoked here
 

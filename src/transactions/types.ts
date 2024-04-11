@@ -34,7 +34,10 @@ export interface BaseConfig {
 
 export interface StaticTimeoutConfig extends BaseConfig {
   type: "static";
-  timeout: number;
+  /**
+   * Duration to wait when confirming a transaction before timing out, in milliseconds.
+   */
+  timeoutMs: number;
 }
 
 export interface TransactionExpirationTimeoutConfig extends BaseConfig {

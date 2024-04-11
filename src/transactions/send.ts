@@ -1,8 +1,16 @@
 import {
+  CompiledInstruction,
   Connection,
+  Keypair,
+  Message,
+  RpcResponseAndContext,
   SendOptions,
   SendTransactionError,
+  SimulatedTransactionResponse,
   Transaction,
+  TransactionMessage,
+  VersionedMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import base58 from "bs58";
 
@@ -15,10 +23,40 @@ import {
   TransactionExpirationTimeoutConfig,
 } from "./types";
 import { abortableSleep, getUnixTs, tryInvokeAbort } from "./utils";
+import {
+  ConfirmationTimeoutError,
+  InstructionError,
+  SignatureError,
+} from "../errors";
+import { TransactionError } from "../errors/transaction";
 
 const DEFAULT_CONFIRMATION_TIMEOUT = 30_000;
 
 const MAX_SEND_TX_RETRIES = 10;
+
+const toVersionedTransaction = async ({
+  connection,
+  transaction,
+}: {
+  connection: Connection;
+  transaction: Transaction;
+}) => {
+  if (!transaction.feePayer) {
+    throw new Error("Cannot convert a transaction that is missing fee payer");
+  }
+
+  const { blockhash: recentBlockhash } = await connection.getLatestBlockhash({
+    commitment: "confirmed",
+  });
+
+  return new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: transaction.feePayer!,
+      recentBlockhash,
+      instructions: transaction.instructions,
+    }).compileToV0Message()
+  );
+};
 
 /**
  * Sends a signed transaction to the Solana blockchain and waits for confirmation.
@@ -39,7 +77,7 @@ export const sendSignedTransaction = async ({
   connection,
   config = {
     type: "static",
-    timeout: DEFAULT_CONFIRMATION_TIMEOUT,
+    timeoutMs: DEFAULT_CONFIRMATION_TIMEOUT,
   },
   options = {
     skipPreflight: true,
@@ -56,10 +94,27 @@ export const sendSignedTransaction = async ({
   options?: SendOptions;
   onTransactionEvent?: TransactionLifecycleEventCallback;
 }): Promise<string> => {
-  const rawTransaction = signedTransaction.serialize();
   const startTime = getUnixTs();
   const controller = new AbortController();
+  let rawTransaction: Buffer;
 
+  try {
+    /**
+     * throws on signature errors unless explicitly told not to via config
+     *
+     * source: https://github.com/solana-labs/solana-web3.js/blob/7265594ce8ac9480dea2b0f5fe84b24fdacf115b/packages/library-legacy/src/transaction/legacy.ts#L797-L833
+     */
+    rawTransaction = signedTransaction.serialize();
+  } catch (err: any) {
+    log("Serialize transaction error: ", err.message);
+    throw new SignatureError({
+      transaction: signedTransaction,
+      message: err.message,
+    });
+  }
+
+  if (signedTransaction.signatures.length === 0)
+    throw new Error(`Transaction does not have any signatures`);
   const signature =
     signedTransaction.signatures[0] instanceof Uint8Array
       ? Buffer.from(signedTransaction.signatures[0])
@@ -82,8 +137,8 @@ export const sendSignedTransaction = async ({
       });
 
       /**
-       * todo: properly handle the possible `SendTransactionError` errors, which right now we just catch and
-       * throw a generic error
+       * todo: handle the possible `SendTransactionError` errors, which right now we just catch and
+       * throw a generic error related to sending a transaction
        *
        * source: https://github.com/solana-labs/solana-web3.js/blob/2d48c0954a3823b937a9b4e572a8d63cd7e4631c/packages/library-legacy/src/connection.ts#L5918-L5927
        */
@@ -139,13 +194,76 @@ export const sendSignedTransaction = async ({
   } catch (err: any) {
     if (err.timeout) {
       tryInvokeAbort(controller);
-      throw new Error("Timed out awaiting confirmation on transaction");
+
+      throw new ConfirmationTimeoutError({
+        transactionId,
+        message: "Timed out awaiting confirmation on transaction",
+        config: ConfirmationTimeoutError.formatConfig(config),
+      });
     }
 
-    // other implementations opt to simulate the transaction after a failure, not sure why at the moment
-    // ref: mango client v3: https://github.com/blockworks-foundation/mango-client-v3/blame/fb92f9cf8caaf72966e4f4135c9d6ebd14756df4/src/client.ts#L508
+    log("Transaction failed, try to simulate transaction");
+    let simulationResult: SimulatedTransactionResponse | null = null;
+    try {
+      const transactionToSimulate =
+        signedTransaction instanceof VersionedTransaction
+          ? signedTransaction
+          : await toVersionedTransaction({
+              connection,
+              transaction: signedTransaction,
+            });
 
-    throw new Error("Transaction failed");
+      onTransactionEvent({
+        type: "simulate",
+        phase: "pending",
+        transactionId,
+      });
+
+      simulationResult = (
+        await connection.simulateTransaction(transactionToSimulate, {
+          commitment: "confirmed",
+        })
+      ).value;
+
+      log(`Transaction ${transactionId} simulation result: `, simulationResult);
+      onTransactionEvent({
+        type: "simulate",
+        phase: "completed",
+        status: "success",
+        transactionId,
+        result: simulationResult,
+      });
+    } catch (err) {
+      log(`Simulate transaction ${transactionId} failed`);
+
+      onTransactionEvent({
+        type: "simulate",
+        phase: "completed",
+        status: "failed",
+        transactionId,
+        err,
+      });
+    }
+
+    if (simulationResult && simulationResult.err) {
+      // note: mango parses logs if available to surface a transaction message. do we want to do this as well?
+      // source: https://github.com/blockworks-foundation/mango-client-v3/blob/fb92f9cf8caaf72966e4f4135c9d6ebd14756df4/src/client.ts#L521
+
+      log(
+        "Transaction simulation error: ",
+        JSON.stringify(simulationResult.err, undefined, 2)
+      );
+      throw new InstructionError({
+        transactionId,
+        error: simulationResult.err,
+        transaction: signedTransaction,
+      });
+    }
+
+    throw new TransactionError({
+      message: "Transaction failed",
+      transactionId,
+    });
   } finally {
     tryInvokeAbort(controller);
   }

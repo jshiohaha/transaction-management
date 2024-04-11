@@ -1,10 +1,20 @@
 import {
+  SimulatedTransactionResponse,
   TransactionConfirmationStatus,
   TransactionError,
   TransactionSignature,
 } from "@solana/web3.js";
 
 export type EventPhase = "pending" | "active" | "completed";
+
+export interface TransactionSimulateEvent {
+  type: "simulate";
+  status?: 'success' | 'failed';
+  err?: any;
+  phase: EventPhase;
+  transactionId?: TransactionSignature;
+  result?: SimulatedTransactionResponse;
+}
 
 export interface TransactionSentEvent {
   type: "send";
@@ -32,4 +42,5 @@ export type TransactionLifecycleEventCallback = (
     | TransactionSentEvent
     | TransactionConfirmedEvent
     | TransactionTimeoutEvent
+    | TransactionSimulateEvent
 ) => void;

@@ -19,7 +19,7 @@ export const applyStaticTimeout = (
     controller.abort();
 
     reject({ timeout: true });
-  }, config.timeout);
+  }, config.timeoutMs);
 
   controller.signal.addEventListener("abort", () => {
     log(`Controller signal aborted, cancelling static timeout: ${timeoutId}`);
