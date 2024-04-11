@@ -4,18 +4,17 @@ import {
   TransactionSignature,
 } from "@solana/web3.js";
 
-export type EventTiming = "processing" | "after";
+export type EventPhase = "pending" | "active" | "completed";
 
 export interface TransactionSentEvent {
-  type: "sent";
-  timing: EventTiming;
-  latency: number;
-  transactionId: TransactionSignature;
+  type: "send";
+  phase: EventPhase;
+  transactionId?: TransactionSignature;
 }
 
 export interface TransactionConfirmedEvent {
   type: "confirm";
-  timing: EventTiming;
+  phase: EventPhase;
   status?: TransactionConfirmationStatus;
   err?: TransactionError;
   transactionId: TransactionSignature;
@@ -23,7 +22,7 @@ export interface TransactionConfirmedEvent {
 
 export interface TransactionTimeoutEvent {
   type: "timeout";
-  timing: EventTiming;
+  phase: EventPhase;
   transactionId: TransactionSignature;
   durationMs: number;
 }
@@ -32,5 +31,5 @@ export type TransactionLifecycleEventCallback = (
   event:
     | TransactionSentEvent
     | TransactionConfirmedEvent
-    | TransactionTimeoutEvent,
+    | TransactionTimeoutEvent
 ) => void;

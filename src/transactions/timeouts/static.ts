@@ -1,3 +1,4 @@
+import { log } from "../../logger";
 import { StaticTimeoutConfig } from "../types";
 
 /**
@@ -11,11 +12,17 @@ import { StaticTimeoutConfig } from "../types";
 export const applyStaticTimeout = (
   config: StaticTimeoutConfig,
   controller: AbortController,
-  reject: (reason?: any) => void,
-) =>
-  setTimeout(() => {
+  reject: (reason?: any) => void
+) => {
+  const timeoutId = setTimeout(() => {
     if (controller.signal.aborted) return;
     controller.abort();
 
     reject({ timeout: true });
   }, config.timeout);
+
+  controller.signal.addEventListener("abort", () => {
+    log(`Controller signal aborted, cancelling static timeout: ${timeoutId}`);
+    clearTimeout(timeoutId);
+  });
+};

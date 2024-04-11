@@ -11,10 +11,11 @@ import { TransactionLifecycleEventCallback } from "./events";
 import { applyTransactionExpiration } from "./timeouts/expiration";
 import { applyStaticTimeout } from "./timeouts/static";
 import {
+  NoTimeoutConfig,
   StaticTimeoutConfig,
   TransactionExpirationTimeoutConfig,
 } from "./types";
-import { sleep, tryInvokeAbort } from "./utils";
+import { abortableSleep, tryInvokeAbort } from "./utils";
 
 const TRANSACTION_CONFIRMATION_VALUES = [
   "processed",
@@ -24,11 +25,11 @@ const TRANSACTION_CONFIRMATION_VALUES = [
 
 const cleanupSubscription = async (
   connection: Connection,
-  subscriptionId?: number,
+  subscriptionId?: number
 ) => {
   if (subscriptionId) {
     connection.removeSignatureListener(subscriptionId).catch((err) => {
-      console.log("[Web Socket] error in cleanup", err);
+      log("[Web Socket] error in cleanup", err);
     });
   }
 };
@@ -49,12 +50,12 @@ enum TransactionConfirmationStatusEnum {
  */
 function areConfirmationLevelsSatisfied(
   requiredStatuses: TransactionConfirmationStatus[],
-  currentStatus?: TransactionConfirmationStatus,
+  currentStatus?: TransactionConfirmationStatus
 ): boolean {
   if (!currentStatus) return false;
   const currentStatusValue = TransactionConfirmationStatusEnum[currentStatus];
   const requiredStatusOrders = requiredStatuses.map(
-    (s) => TransactionConfirmationStatusEnum[s],
+    (s) => TransactionConfirmationStatusEnum[s]
   );
 
   return currentStatusValue >= Math.max(...requiredStatusOrders);
@@ -72,160 +73,199 @@ export const awaitTransactionSignatureConfirmation = async ({
   connection,
   transactionId,
   config,
-  eventCallback,
+  onTransactionEvent,
+  controller: _controller,
+  transactionCommitment
 }: {
   connection: Connection;
   transactionId: TransactionSignature;
-  config?: StaticTimeoutConfig | TransactionExpirationTimeoutConfig;
-  eventCallback: TransactionLifecycleEventCallback;
+  config?:
+    | StaticTimeoutConfig
+    | TransactionExpirationTimeoutConfig
+    | NoTimeoutConfig;
+  onTransactionEvent: TransactionLifecycleEventCallback;
+  controller?: AbortController;
+  transactionCommitment?: Commitment;
 }) => {
-  const controller = new AbortController();
+  const controller = _controller ?? new AbortController();
   const signal = controller.signal;
 
   const subscriptionConfirmationCommitment =
-    config?.commitment ?? connection.commitment ?? DEFAULT_COMMITMENT;
-  const confirmationLevels = config?.confirmationLevels ?? ["confirmed"];
+    config?.initialConfirmationCommitment ??
+    connection.commitment ??
+    DEFAULT_COMMITMENT;
+  const requiredConfirmationLevels = config?.requiredConfirmationLevels ?? ["confirmed"];
 
-  const result = await new Promise((resolve, reject) => {
+  onTransactionEvent({
+    type: "confirm",
+    phase: "pending",
+    transactionId,
+  });
+
+  const result = await new Promise(async (resolve, reject) => {
     if (config?.type === "static")
       applyStaticTimeout(config, controller, reject);
     if (config?.type === "expiration")
-      applyTransactionExpiration(connection, config, controller, reject);
+      applyTransactionExpiration({
+        connection,
+        config,
+        controller,
+        reject,
+        transactionCommitment
+      });
 
-    let subscriptionId: number | undefined;
-    try {
-      subscriptionId = connection.onSignature(
-        transactionId,
-        async (result) => {
-          log("[WebSocket] result confirmed: ", transactionId, result);
+    await new Promise(async (innerResolve, _) => {
+      let subscriptionId: number | undefined;
+      try {
+        log("[WebSocket] Setting up onSignature subscription...");
+        subscriptionId = connection.onSignature(
+          transactionId,
+          async (result) => {
+            log("[WebSocket] result confirmed: ", transactionId, result);
 
-          cleanupSubscription(connection, subscriptionId);
-          if (result.err) {
-            tryInvokeAbort(controller);
-            reject(result.err);
-          } else {
-            const isValidConfirmationValue =
-              TRANSACTION_CONFIRMATION_VALUES.includes(
-                subscriptionConfirmationCommitment as Extract<
-                  Commitment,
-                  TransactionConfirmationStatus
-                >,
-              );
-
-            // resolve promise if valid transaction confirmation value OR all target commitments are satisfied.
-            // else, continue polling for transaction status below.
-            if (
-              !isValidConfirmationValue ||
-              (isValidConfirmationValue &&
-                areConfirmationLevelsSatisfied(
-                  confirmationLevels,
-                  subscriptionConfirmationCommitment as TransactionConfirmationStatus,
-                ))
-            ) {
-              eventCallback({
+            cleanupSubscription(connection, subscriptionId);
+            if (result.err) {
+              onTransactionEvent({
                 type: "confirm",
-                timing: "processing",
+                phase: "completed",
                 transactionId,
+                err: result.err,
                 status:
                   subscriptionConfirmationCommitment as TransactionConfirmationStatus,
               });
 
               tryInvokeAbort(controller);
-              resolve(result);
-            }
-          }
-        },
-        subscriptionConfirmationCommitment,
-      );
-
-      log("[WebSocket] setup connection: ", transactionId);
-    } catch (err: any) {
-      // note: at the moment, no event callback invoked here
-
-      cleanupSubscription(connection, subscriptionId);
-      tryInvokeAbort(controller);
-      log("[WebSocket] error: ", transactionId, err);
-    }
-
-    const pollingTimeout = config?.pollingTimeoutMs ?? DEFAULT_POLLING_TIMEOUT;
-    while (!signal.aborted) {
-      (async () => {
-        try {
-          const signatureStatuses = await connection.getSignatureStatuses([
-            transactionId,
-          ]);
-
-          const result = signatureStatuses && signatureStatuses.value[0];
-          if (!signal.aborted) {
-            if (!result) {
-              log("[REST] result is null: ", transactionId, result);
-            } else if (result.err) {
-              log("[REST] result has error: ", transactionId, result);
-
-              eventCallback({
-                type: "confirm",
-                timing: "after",
-                transactionId,
-                err: result.err,
-              });
-
-              tryInvokeAbort(controller);
               reject(result.err);
-            } else if (
-              !(
-                result.confirmations ||
-                result.confirmationStatus ||
-                areConfirmationLevelsSatisfied(
-                  confirmationLevels,
-                  result.confirmationStatus,
-                )
-              )
-            ) {
-              if (result?.confirmationStatus) {
-                eventCallback({
+            } else {
+              const isValidConfirmationValue =
+                TRANSACTION_CONFIRMATION_VALUES.includes(
+                  subscriptionConfirmationCommitment as Extract<
+                    Commitment,
+                    TransactionConfirmationStatus
+                  >
+                );
+
+              // resolve promise if valid transaction confirmation value OR all target commitments are satisfied.
+              // else, continue polling for transaction status below.
+              if (
+                !isValidConfirmationValue ||
+                (isValidConfirmationValue &&
+                  areConfirmationLevelsSatisfied(
+                    requiredConfirmationLevels,
+                    subscriptionConfirmationCommitment as TransactionConfirmationStatus
+                  ))
+              ) {
+                onTransactionEvent({
                   type: "confirm",
-                  timing: "processing",
+                  phase: "completed",
                   transactionId,
-                  status: result.confirmationStatus,
+                  status:
+                    subscriptionConfirmationCommitment as TransactionConfirmationStatus,
                 });
 
-                log(
-                  "[REST] result confirmed with commitment: ",
+                tryInvokeAbort(controller);
+                resolve(result);
+              } else {
+                onTransactionEvent({
+                  type: "confirm",
+                  phase: "pending",
                   transactionId,
-                  result,
-                );
+                  status:
+                    subscriptionConfirmationCommitment as TransactionConfirmationStatus,
+                });
+
+                innerResolve(result);
               }
-
-              log(
-                "[REST] result confirmation does not satisfy target commitments: ",
-                transactionId,
-                confirmationLevels,
-                result,
-              );
-            } else {
-              log("[REST] result confirmed: ", transactionId, result);
-              eventCallback({
-                type: "confirm",
-                timing: "after",
-                transactionId,
-                status: result.confirmationStatus,
-              });
-
-              tryInvokeAbort(controller);
-              resolve(result);
             }
-          }
-        } catch (e) {
-          // note: at the moment, no event callback invoked here
-          if (!controller.signal.aborted) {
-            log("[REST] connection error: ", transactionId, e);
-          }
+          },
+          subscriptionConfirmationCommitment
+        );
 
-          tryInvokeAbort(controller);
+        log("[WebSocket] Setup connection for transaction ", transactionId);
+      } catch (err: any) {
+        // note: at the moment, no event callback invoked here
+
+        cleanupSubscription(connection, subscriptionId);
+        tryInvokeAbort(controller);
+        log("[WebSocket] error: ", transactionId, err);
+      }
+    });
+
+    const pollingTimeout =
+      config?.pollingConfirmationTimeoutMs ?? DEFAULT_POLLING_TIMEOUT;
+    while (!signal.aborted) {
+      try {
+        const signatureStatuses = await connection.getSignatureStatuses([
+          transactionId,
+        ]);
+        log("[REST] Signature status result: ", signatureStatuses);
+
+        const result = signatureStatuses && signatureStatuses.value[0];
+        if (!signal.aborted) {
+          if (!result) {
+            log("[REST] result is null: ", transactionId, result);
+          } else if (result.err) {
+            log("[REST] result has error: ", transactionId, result);
+
+            onTransactionEvent({
+              type: "confirm",
+              phase: "completed",
+              transactionId,
+              err: result.err,
+              status: result.confirmationStatus,
+            });
+
+            tryInvokeAbort(controller);
+            reject(result.err);
+          } else if (!(result.confirmations || result.confirmationStatus)) {
+            log(
+              `[REST] result "confirmations" or "confirmationStatus" is null: `,
+              transactionId,
+              requiredConfirmationLevels,
+              result
+            );
+          } else if (
+            !areConfirmationLevelsSatisfied(
+              requiredConfirmationLevels,
+              result.confirmationStatus
+            )
+          ) {
+            log(
+              "[REST] result confirmed with commitment: ",
+              transactionId,
+              result
+            );
+
+            onTransactionEvent({
+              type: "confirm",
+              phase: "active",
+              transactionId,
+              status: result.confirmationStatus,
+            });
+          } else {
+            log("[REST] result confirmed: ", transactionId, result);
+
+            onTransactionEvent({
+              type: "confirm",
+              phase: "completed",
+              transactionId,
+              status: result.confirmationStatus,
+            });
+
+            tryInvokeAbort(controller);
+            resolve(result);
+          }
+        }
+      } catch (e) {
+        // note: at the moment, no event callback invoked here
+        if (!controller.signal.aborted) {
+          log("[REST] connection error: ", transactionId, e);
         }
 
-        await sleep(pollingTimeout);
-      })();
+        tryInvokeAbort(controller);
+      }
+
+      await abortableSleep(pollingTimeout, controller);
     }
   });
 

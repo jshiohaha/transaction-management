@@ -4,6 +4,7 @@ import {
   SendTransactionError,
   Transaction,
 } from "@solana/web3.js";
+import base58 from "bs58";
 
 import { log } from "../logger";
 import { awaitTransactionSignatureConfirmation } from "./confirm";
@@ -13,7 +14,7 @@ import {
   StaticTimeoutConfig,
   TransactionExpirationTimeoutConfig,
 } from "./types";
-import { getUnixTs, sleep, tryInvokeAbort } from "./utils";
+import { abortableSleep, getUnixTs, tryInvokeAbort } from "./utils";
 
 const DEFAULT_CONFIRMATION_TIMEOUT = 30_000;
 
@@ -27,7 +28,7 @@ const MAX_SEND_TX_RETRIES = 10;
  * @param continuouslySendTransactions - (optional) Whether to continuously send transactions until aborted. Default is true.
  * @param config - (optional) The transaction timeout configuration. Default is { type: "static", timeout: DEFAULT_CONFIRMATION_TIMEOUT }.
  * @param options - (optional) The send options for the transaction.
- * @param eventCallback - (optional) The callback function to handle transaction lifecycle events.
+ * @param onTransactionEvent - (optional) The callback function to handle transaction lifecycle events.
  *
  * @returns A promise that resolves to the transaction ID once the transaction is confirmed.
  *
@@ -36,7 +37,6 @@ const MAX_SEND_TX_RETRIES = 10;
 export const sendSignedTransaction = async ({
   signedTransaction,
   connection,
-  continuouslySendTransactions = true,
   config = {
     type: "static",
     timeout: DEFAULT_CONFIRMATION_TIMEOUT,
@@ -45,58 +45,77 @@ export const sendSignedTransaction = async ({
     skipPreflight: true,
     maxRetries: MAX_SEND_TX_RETRIES,
   },
-  eventCallback = (...args) => console.log(...args),
+  onTransactionEvent = (...args) => console.log(...args),
 }: {
   signedTransaction: Transaction;
   connection: Connection;
-  continuouslySendTransactions?: boolean;
   config?:
     | StaticTimeoutConfig
     | TransactionExpirationTimeoutConfig
     | NoTimeoutConfig;
   options?: SendOptions;
-  eventCallback?: TransactionLifecycleEventCallback;
+  onTransactionEvent?: TransactionLifecycleEventCallback;
 }): Promise<string> => {
-  /**
-   * todos:
-   * - [ ] handle `sendTransactions` errors - can throw `SendTransactionError`
-   *   > source: https://github.com/solana-labs/solana-web3.js/blob/2d48c0954a3823b937a9b4e572a8d63cd7e4631c/packages/library-legacy/src/connection.ts#L5918-L5927
-   * - [ ] add error handling
-   */
-
   const rawTransaction = signedTransaction.serialize();
   const startTime = getUnixTs();
   const controller = new AbortController();
 
-  const transactionId = await connection
-    .sendRawTransaction(rawTransaction, options)
-    .catch((err: SendTransactionError) => {
-      console.error("SendTransactionError: ", err);
-      throw new Error("Failed to send transaction");
-    });
+  const signature =
+    signedTransaction.signatures[0] instanceof Uint8Array
+      ? Buffer.from(signedTransaction.signatures[0])
+      : signedTransaction.signatures[0].signature;
+  if (!signature) throw new Error(`Invalid signature`);
 
-  eventCallback({
-    type: "sent",
-    timing: "after",
-    transactionId,
-    latency: getUnixTs() - startTime,
-  });
+  const transactionId = base58.encode(Buffer.from(signature));
 
-  if (config.type === "none") {
-    return transactionId;
-  }
+  (async () => {
+    const pollingSendTransactionTimeoutMs =
+      config.pollingSendTransactionTimeoutMs ?? 1_000;
+    const continuouslySendTransactions =
+      config.continuouslySendTransactions ?? true;
 
-  const pollingTimeout = config.pollingTimeoutMs ?? 1_000;
-  if (continuouslySendTransactions) {
     while (!controller.signal.aborted) {
+      onTransactionEvent({
+        type: "send",
+        phase: "pending",
+        transactionId,
+      });
+
+      /**
+       * todo: properly handle the possible `SendTransactionError` errors, which right now we just catch and
+       * throw a generic error
+       *
+       * source: https://github.com/solana-labs/solana-web3.js/blob/2d48c0954a3823b937a9b4e572a8d63cd7e4631c/packages/library-legacy/src/connection.ts#L5918-L5927
+       */
       connection
         .sendRawTransaction(rawTransaction, options)
         .catch((err: SendTransactionError) => {
           console.error("SendTransactionError: ", err);
           throw new Error("Failed to send transaction");
         });
-      await sleep(pollingTimeout);
+
+      onTransactionEvent({
+        type: "send",
+        phase: "completed",
+        transactionId,
+      });
+
+      if (!continuouslySendTransactions) {
+        log("[Continuous send = false] first transaction sent, bailing...");
+        break;
+      }
+
+      await abortableSleep(pollingSendTransactionTimeoutMs, controller);
     }
+  })();
+
+  if (config.type === "none") {
+    controller.abort();
+    log(
+      "Caller requested no confirmation, skipping all confirmation and returning after initial transaction sent to cluster"
+    );
+
+    return transactionId;
   }
 
   try {
@@ -104,17 +123,21 @@ export const sendSignedTransaction = async ({
       connection,
       transactionId,
       config,
-      eventCallback,
+      onTransactionEvent,
+      controller,
+      transactionCommitment:
+        config?.type === "expiration"
+          ? config?.transactionCommitment
+          : undefined,
     });
+
+    log(
+      "Finished transaction status confirmation: ",
+      transactionId,
+      getUnixTs() - startTime
+    );
   } catch (err: any) {
     if (err.timeout) {
-      eventCallback({
-        type: "timeout",
-        timing: "after",
-        transactionId,
-        durationMs: getUnixTs() - startTime,
-      });
-
       tryInvokeAbort(controller);
       throw new Error("Timed out awaiting confirmation on transaction");
     }
@@ -130,7 +153,7 @@ export const sendSignedTransaction = async ({
   log(
     "Transaction confirmation latency: ",
     transactionId,
-    getUnixTs() - startTime,
+    getUnixTs() - startTime
   );
 
   return transactionId;
