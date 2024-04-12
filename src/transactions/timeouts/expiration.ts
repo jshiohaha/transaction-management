@@ -1,9 +1,9 @@
-import { Commitment, Connection } from "@solana/web3.js";
+import { Commitment, Connection } from '@solana/web3.js';
 
-import { DEFAULT_COMMITMENT, DEFAULT_POLLING_TIMEOUT } from "../constants";
-import { TransactionExpirationTimeoutConfig } from "../types";
-import { abortableSleep } from "../utils";
-import { log } from "../../logger";
+import { DEFAULT_COMMITMENT, DEFAULT_POLLING_TIMEOUT } from '../constants';
+import { TransactionExpirationTimeoutConfig } from '../types';
+import { abortableSleep } from '../utils';
+import { log } from '../../logger';
 
 /**
  * Applies transaction expiration logic to wait for a transaction blockhash to become valid.
@@ -27,22 +27,18 @@ export const applyTransactionExpiration = async ({
   reject: (reason?: any) => void;
   transactionCommitment?: Commitment;
 }) => {
-  const pollingTimeout =
-    config.blockhashValidityPollingTimeoutMs ?? DEFAULT_POLLING_TIMEOUT;
-  const commitment =
-    transactionCommitment ?? connection.commitment ?? DEFAULT_COMMITMENT;
+  const pollingTimeout = config.blockhashValidityPollingTimeoutMs ?? DEFAULT_POLLING_TIMEOUT;
+  const commitment = transactionCommitment ?? connection.commitment ?? DEFAULT_COMMITMENT;
 
-  console.log("config.transactionBlockhash: ", config.transactionBlockhash);
-  console.log("commitment: ", commitment);
   while (!controller.signal.aborted) {
-    const isBlockhashValid = await connection.isBlockhashValid(
-      config.transactionBlockhash,
-      {
-        commitment,
-      }
-    );
+    const isBlockhashValid = await connection.isBlockhashValid(config.transactionBlockhash, {
+      commitment,
+    });
 
-    log("isBlockhashValid: ", isBlockhashValid);
+    log(
+      `blockhash: ${config.transactionBlockhash}, commitment: ${commitment} is valid? `,
+      isBlockhashValid,
+    );
 
     if (!isBlockhashValid.value) {
       if (controller.signal.aborted) return;

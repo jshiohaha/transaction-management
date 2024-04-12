@@ -1,7 +1,7 @@
 import {
   StaticTimeoutConfig,
   TransactionExpirationTimeoutConfig,
-} from "../transactions/types";
+} from "../types";
 
 namespace ConfirmationTimeoutError {
   export type ErrorTimeoutConfig =

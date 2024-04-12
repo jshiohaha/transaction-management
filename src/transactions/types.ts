@@ -30,6 +30,14 @@ export interface BaseConfig {
    * is false.
    */
   pollingSendTransactionTimeoutMs?: number;
+  /**
+   * Commitment level used when creating the transaction. If not defined,
+   * the fallback values will be:
+   *
+   * 1. the Connection instance's commitment level,
+   * 2. the defined `DEFAULT_COMMITMENT` constant
+   */
+  transactionCommitment?: Commitment;
 }
 
 export interface StaticTimeoutConfig extends BaseConfig {
@@ -43,14 +51,6 @@ export interface StaticTimeoutConfig extends BaseConfig {
 export interface TransactionExpirationTimeoutConfig extends BaseConfig {
   type: "expiration";
   transactionBlockhash: Blockhash;
-  /**
-   * Commitment level used when creating the transaction. If not defined,
-   * the fallback values will be:
-   *
-   * 1. the Connection instance's commitment level,
-   * 2. the defined `DEFAULT_COMMITMENT` constant
-   */
-  transactionCommitment: Commitment;
   /**
    * What is the amount of time between calls when checking if the transaction blockhash
    * is still valid, in milliseconds.

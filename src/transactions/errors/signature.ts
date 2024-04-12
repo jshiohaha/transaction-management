@@ -1,4 +1,4 @@
-import { Transaction } from "@solana/web3.js";
+import { Transaction, VersionedTransaction } from "@solana/web3.js";
 
 /**
  * Handle errors thrown specifically on the Transaction::serialize method.
@@ -8,13 +8,13 @@ import { Transaction } from "@solana/web3.js";
  */
 export class SignatureError extends Error {
   message: string;
-  rawTransaction: Buffer;
+  rawTransaction: Buffer | Uint8Array;
 
   constructor({
     transaction,
     message,
   }: {
-    transaction: Transaction;
+    transaction: Transaction | VersionedTransaction;
     message: string;
   }) {
     super();

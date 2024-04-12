@@ -1,12 +1,12 @@
 export class TransactionError extends Error {
   message: string;
-  transactionId: string;
+  transactionId?: string;
 
   constructor({
     transactionId,
     message,
   }: {
-    transactionId: string;
+    transactionId?: string;
     message: string;
   }) {
     super();
