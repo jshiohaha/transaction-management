@@ -4,10 +4,15 @@ import base58 from "bs58";
 
 export const getUnixTs = () => new Date().getTime() / 1000;
 
+export const abortableSleep = async (
+  ms: number,
+  controller?: AbortController
+) => (!controller ? sleep(ms) : sleepWithController(ms, controller));
+
 export const sleep = async (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-export const abortableSleep = async (
+export const sleepWithController = async (
   ms: number,
   controller: AbortController
 ) => {

@@ -5,7 +5,7 @@ import {
   TransactionSignature,
 } from "@solana/web3.js";
 
-import { log } from "../logger";
+import { debug } from "../logger";
 import { DEFAULT_COMMITMENT, DEFAULT_POLLING_TIMEOUT } from "./constants";
 import { TransactionLifecycleEventCallback } from "./events";
 import { applyTransactionExpiration } from "./timeouts/expiration";
@@ -29,7 +29,10 @@ const cleanupSubscription = async (
 ) => {
   if (subscriptionId) {
     connection.removeSignatureListener(subscriptionId).catch((err) => {
-      log("[Web Socket] error in cleanup", err);
+      debug(
+        `[Web Socket] error in invoking removeSignatureListener for subscription ${subscriptionId}`,
+        err
+      );
     });
   }
 };
@@ -83,7 +86,7 @@ export const awaitTransactionSignatureConfirmation = async ({
     | StaticTimeoutConfig
     | TransactionExpirationTimeoutConfig
     | NoTimeoutConfig;
-  onTransactionEvent: TransactionLifecycleEventCallback;
+  onTransactionEvent?: TransactionLifecycleEventCallback;
   controller?: AbortController;
   transactionCommitment?: Commitment;
 }) => {
@@ -98,11 +101,7 @@ export const awaitTransactionSignatureConfirmation = async ({
     "confirmed",
   ];
 
-  console.log(
-    "subscriptionConfirmationCommitment: ",
-    subscriptionConfirmationCommitment
-  );
-  onTransactionEvent({
+  onTransactionEvent?.({
     type: "confirm",
     phase: "pending",
     transactionId,
@@ -123,15 +122,15 @@ export const awaitTransactionSignatureConfirmation = async ({
     await new Promise(async (innerResolve, _) => {
       let subscriptionId: number | undefined;
       try {
-        log("[WebSocket] Setting up onSignature subscription...");
+        debug("[WebSocket] Setting up onSignature subscription...");
         subscriptionId = connection.onSignature(
           transactionId,
           async (result) => {
-            log("[WebSocket] result confirmed: ", transactionId, result);
+            debug("[WebSocket] result confirmed: ", transactionId, result);
 
             cleanupSubscription(connection, subscriptionId);
             if (result.err) {
-              onTransactionEvent({
+              onTransactionEvent?.({
                 type: "confirm",
                 phase: "completed",
                 transactionId,
@@ -161,7 +160,7 @@ export const awaitTransactionSignatureConfirmation = async ({
                     subscriptionConfirmationCommitment as TransactionConfirmationStatus
                   ))
               ) {
-                onTransactionEvent({
+                onTransactionEvent?.({
                   type: "confirm",
                   phase: "completed",
                   transactionId,
@@ -172,7 +171,7 @@ export const awaitTransactionSignatureConfirmation = async ({
                 tryInvokeAbort(controller);
                 resolve(result);
               } else {
-                onTransactionEvent({
+                onTransactionEvent?.({
                   type: "confirm",
                   phase: "pending",
                   transactionId,
@@ -187,7 +186,7 @@ export const awaitTransactionSignatureConfirmation = async ({
           subscriptionConfirmationCommitment
         );
 
-        log("[WebSocket] Setup connection for transaction ", transactionId);
+        debug("[WebSocket] Setup connection for transaction ", transactionId);
         controller.signal.addEventListener("abort", () => {
           cleanupSubscription(connection, subscriptionId);
         });
@@ -196,7 +195,7 @@ export const awaitTransactionSignatureConfirmation = async ({
 
         cleanupSubscription(connection, subscriptionId);
         tryInvokeAbort(controller);
-        log("[WebSocket] error: ", transactionId, err);
+        debug("[WebSocket] error: ", transactionId, err);
       }
     });
 
@@ -207,16 +206,16 @@ export const awaitTransactionSignatureConfirmation = async ({
         const signatureStatuses = await connection.getSignatureStatuses([
           transactionId,
         ]);
-        log("[REST] Signature status result: ", signatureStatuses);
+        debug("[REST] Signature status result: ", signatureStatuses);
 
         const result = signatureStatuses && signatureStatuses.value[0];
         if (!signal.aborted) {
           if (!result) {
-            log("[REST] result is null: ", transactionId, result);
+            debug("[REST] result is null: ", transactionId, result);
           } else if (result.err) {
-            log("[REST] result has error: ", transactionId, result);
+            debug("[REST] result has error: ", transactionId, result);
 
-            onTransactionEvent({
+            onTransactionEvent?.({
               type: "confirm",
               phase: "completed",
               transactionId,
@@ -227,7 +226,7 @@ export const awaitTransactionSignatureConfirmation = async ({
             tryInvokeAbort(controller);
             reject(result.err);
           } else if (!(result.confirmations || result.confirmationStatus)) {
-            log(
+            debug(
               `[REST] result "confirmations" or "confirmationStatus" is null: `,
               transactionId,
               requiredConfirmationLevels,
@@ -239,22 +238,22 @@ export const awaitTransactionSignatureConfirmation = async ({
               result.confirmationStatus
             )
           ) {
-            log(
+            debug(
               "[REST] result confirmed with commitment: ",
               transactionId,
               result
             );
 
-            onTransactionEvent({
+            onTransactionEvent?.({
               type: "confirm",
               phase: "active",
               transactionId,
               status: result.confirmationStatus,
             });
           } else {
-            log("[REST] result confirmed: ", transactionId, result);
+            debug("[REST] result confirmed: ", transactionId, result);
 
-            onTransactionEvent({
+            onTransactionEvent?.({
               type: "confirm",
               phase: "completed",
               transactionId,
@@ -268,7 +267,7 @@ export const awaitTransactionSignatureConfirmation = async ({
       } catch (e) {
         // note: at the moment, no event callback invoked here
         if (!controller.signal.aborted) {
-          log("[REST] connection error: ", transactionId, e);
+          debug("[REST] connection error: ", transactionId, e);
         }
 
         tryInvokeAbort(controller);

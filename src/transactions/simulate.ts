@@ -7,7 +7,7 @@ import {
   VersionedTransaction,
 } from "@solana/web3.js";
 
-import { log } from "../logger";
+import { debug, error, log } from "../logger";
 import { InstructionError } from "./errors";
 import { TransactionError } from "./errors/transaction";
 import { TransactionSimulateEvent } from "./events";
@@ -55,7 +55,7 @@ export const simulateTransaction = async ({
   config = {
     commitment: "confirmed",
   },
-  onTransactionEvent = (...args) => console.log(...args),
+  onTransactionEvent
 }: {
   transaction: Transaction | VersionedTransaction;
   connection: Connection;
@@ -64,7 +64,7 @@ export const simulateTransaction = async ({
 }): Promise<SimulatedTransactionResponse> => {
   const transactionId = getTransactionSignature(transaction);
 
-  log("Transaction failed, try to simulate transaction");
+  debug("Transaction failed, trying to simulate transaction");
   let simulationResult: SimulatedTransactionResponse | null = null;
   try {
     const transactionToSimulate =
@@ -75,7 +75,7 @@ export const simulateTransaction = async ({
             transaction,
           });
 
-    onTransactionEvent({
+    onTransactionEvent?.({
       type: "simulate",
       phase: "pending",
       transactionId,
@@ -86,7 +86,7 @@ export const simulateTransaction = async ({
     ).value;
 
     log(`Transaction ${transactionId} simulation result: `, simulationResult);
-    onTransactionEvent({
+    onTransactionEvent?.({
       type: "simulate",
       phase: "completed",
       status: "success",
@@ -94,9 +94,9 @@ export const simulateTransaction = async ({
       result: simulationResult,
     });
   } catch (err) {
-    log(`Simulate transaction ${transactionId} failed`);
+    error(`Simulate transaction ${transactionId} failed`);
 
-    onTransactionEvent({
+    onTransactionEvent?.({
       type: "simulate",
       phase: "completed",
       status: "failed",
@@ -106,9 +106,9 @@ export const simulateTransaction = async ({
   }
 
   if (!simulationResult) {
-    log(`Simulate transaction ${transactionId} result was null`);
+    error(`Simulate transaction ${transactionId} result was null`);
 
-    onTransactionEvent({
+    onTransactionEvent?.({
       type: "simulate",
       phase: "completed",
       status: "failed",
@@ -123,7 +123,7 @@ export const simulateTransaction = async ({
     // note: mango parses logs if available to surface a transaction message. do we want to do this as well?
     // source: https://github.com/blockworks-foundation/mango-client-v3/blob/fb92f9cf8caaf72966e4f4135c9d6ebd14756df4/src/client.ts#L521
 
-    log(
+    error(
       "Transaction simulation error: ",
       JSON.stringify(simulationResult.err, undefined, 2)
     );

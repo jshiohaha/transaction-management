@@ -1,10 +1,34 @@
 import {
   Blockhash,
   Commitment,
+  SendOptions,
   TransactionConfirmationStatus,
 } from "@solana/web3.js";
 
-export interface BaseConfig {
+export type SendTransactionConfig = {
+  /**
+   * Controller used to decide when to stop sending transactions iff `continuouslySendTransactions` is defined
+   * and has a boolean value of true
+   */
+  controller?: AbortController;
+  /**
+   * Whether or not the transaction should continuously be sent to the cluster
+   * before returning.
+   */
+  continuouslySendTransactions?: boolean;
+  /**
+   * If continuously sending transactions to the cluster status is used, what is the
+   * amount of time between calls, in milliseconds. Ignored if "continuouslySendTransactions"
+   * is false.
+   */
+  pollingSendTransactionTimeoutMs?: number;
+  /**
+   * Options passed to the `sendRawTransaction` function from the Connection class in @solana/webe.js
+   */
+  sendOptions?: SendOptions;
+};
+
+export type BaseConfig = {
   /**
    * Commitment level used when first setting up a websocket connection
    * to listen for the status of a transaction.
@@ -20,17 +44,6 @@ export interface BaseConfig {
    */
   pollingConfirmationTimeoutMs?: number;
   /**
-   * Whether or not the transaction should continuously be sent to the cluster
-   * before returning.
-   */
-  continuouslySendTransactions?: boolean;
-  /**
-   * If continuously sending transactions to the cluster status is used, what is the
-   * amount of time between calls, in milliseconds. Ignored if "continuouslySendTransactions"
-   * is false.
-   */
-  pollingSendTransactionTimeoutMs?: number;
-  /**
    * Commitment level used when creating the transaction. If not defined,
    * the fallback values will be:
    *
@@ -38,17 +51,17 @@ export interface BaseConfig {
    * 2. the defined `DEFAULT_COMMITMENT` constant
    */
   transactionCommitment?: Commitment;
-}
+};
 
-export interface StaticTimeoutConfig extends BaseConfig {
+export type StaticTimeoutConfig = BaseConfig & {
   type: "static";
   /**
    * Duration to wait when confirming a transaction before timing out, in milliseconds.
    */
   timeoutMs: number;
-}
+};
 
-export interface TransactionExpirationTimeoutConfig extends BaseConfig {
+export type TransactionExpirationTimeoutConfig = BaseConfig & {
   type: "expiration";
   transactionBlockhash: Blockhash;
   /**
@@ -56,8 +69,8 @@ export interface TransactionExpirationTimeoutConfig extends BaseConfig {
    * is still valid, in milliseconds.
    */
   blockhashValidityPollingTimeoutMs?: number;
-}
+};
 
-export interface NoTimeoutConfig extends BaseConfig {
+export type NoTimeoutConfig = BaseConfig & {
   type: "none";
-}
+};
