@@ -2,12 +2,13 @@ import { log } from "../../logger";
 import { StaticTimeoutConfig } from "../types";
 
 /**
- * Applies a static timeout to the given configuration.
- * If the timeout is reached, the provided AbortController is aborted and the rejection function is called with a timeout error.
+ * Applies a static timeout to an asynchronous operation, aborting the process if the specified time limit is exceeded.
+ * If the timeout is reached and the controller's abort signal has not been activated, it aborts the operation and
+ * rejects the associated promise. Additionally, it handles cleanup if the abort signal is activated before the timeout.
  *
- * @param config - The static timeout configuration.
- * @param controller - The AbortController used to abort the operation if the timeout is reached.
- * @param reject - The rejection function to be called if the timeout is reached.
+ * @param {StaticTimeoutConfig} config - Configuration object that includes the timeout duration in milliseconds.
+ * @param {AbortController} controller - The AbortController associated with the asynchronous operation to be controlled.
+ * @param {(reason?: any) => void} reject - The reject function of the Promise that should be called if the operation times
  */
 export const applyStaticTimeout = (
   config: StaticTimeoutConfig,

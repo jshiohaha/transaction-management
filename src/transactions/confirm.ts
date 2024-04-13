@@ -44,17 +44,10 @@ enum TransactionConfirmationStatusEnum {
   finalized,
 }
 
-/**
- * Determines if the current transaction confirmation status satisfies the required target commitments.
- *
- * @param requiredStatuses - An array of required transaction confirmation statuses.
- * @param currentStatus - The current transaction confirmation status.
- * @returns A boolean indicating whether the current transaction confirmation status satisfies the required target commitments.
- */
-function areConfirmationLevelsSatisfied(
+const areConfirmationLevelsSatisfied = (
   requiredStatuses: TransactionConfirmationStatus[],
   currentStatus?: TransactionConfirmationStatus
-): boolean {
+): boolean => {
   if (!currentStatus) return false;
   const currentStatusValue = TransactionConfirmationStatusEnum[currentStatus];
   const requiredStatusOrders = requiredStatuses.map(
@@ -62,15 +55,47 @@ function areConfirmationLevelsSatisfied(
   );
 
   return currentStatusValue >= Math.max(...requiredStatusOrders);
-}
+};
 
 /**
- * Waits for the confirmation of a transaction signature.
+ * Monitors and confirms a transaction signature's status based on specified configurations. The function leverages both
+ * WebSocket and REST polling strategies to verify the transaction status against a set of required confirmation levels. 
+ * Waits for the confirmation of a transaction signature. It handles different configurations for timeouts and allows for
+ * the process to be aborted externally. Transaction events are emitted throughout the process for each phase: pending,
+ * active, or completed. The function has 3 steps to it:
  *
- * @param connection - The Solana connection object.
- * @param transactionId - The transaction signature to wait for confirmation.
- * @param config - The configuration object for the timeout and polling settings.
- * @returns A promise that resolves with the confirmation result of the transaction.
+ * 1. Start an async timeout process in case confirmation takes an arbitrarily long time. We
+ *    want to be able to pull the escape hatch and stop all related processes if exceed the
+ *    specified timeout configuration.
+ * 2. Setup a websocket connection to listen for a events for a signature given a specific
+ *    commitment level.
+ * 3. If the caller requested additional commitment levels beyond what was specified in the
+ *    websocket subscription, we will poll for signature status until we satisfy the additional
+ *    commitment levels.
+ *
+ * As an example, consider the case where a user wants to timeout confirmation after 30 seconds
+ * and wants to use the subscription to wait for an initial 'confirmed' commitment status
+ * but wants to keep polling until it reaches the 'finalized' status. We will first start the
+ * 30 second timer and then setup the subscription to listen for the transaction signature and
+ * provide the 'confirmed' commitment level. Assuming that we get a response that the signature
+ * is successful, we will then start polling for signature status because confirmed < finalized
+ * w.r.t. commitment levels. If we can get a finalized status within 30s from starting the function,
+ * we will return successfully. If not, we will return a rejected promise, indicating there was a timeout.
+ *
+ * @param {Object} params - The parameters needed for transaction signature confirmation.
+ * @param {Connection} params.connection - The blockchain connection used for sending requests and subscribing to events.
+ * @param {string} params.transactionId - The transaction signature to be confirmed.
+ * @param {StaticTimeoutConfig | TransactionExpirationTimeoutConfig | NoTimeoutConfig} [params.config] - The configuration
+ *        defining the confirmation process behavior, including timeouts and required confirmation levels.
+ * @param {TransactionLifecycleEventCallback} [params.onTransactionEvent] - Callback function to handle transaction lifecycle events.
+ * @param {AbortController} [params.controller] - An optional AbortController to manage cancellation of the confirmation process.
+ * @param {Commitment} [params.transactionCommitment] - The commitment level at which the transaction needs to be confirmed.
+ *
+ * @returns {Promise<Object>} - A promise that resolves with the transaction status or rejects with an error if the transaction fails
+ *          to meet the confirmation criteria or if an error occurs during the confirmation process.
+ *
+ * @throws {Error} - Throws an error if the WebSocket or REST polling encounters an exception that is not handled by the configured
+ *                   error management strategy.
  */
 export const awaitTransactionSignatureConfirmation = async ({
   connection,
@@ -108,6 +133,7 @@ export const awaitTransactionSignatureConfirmation = async ({
   });
 
   const result = await new Promise(async (resolve, reject) => {
+    // [Step 1] kick off timeout processes if specified
     if (config?.type === "static")
       applyStaticTimeout(config, controller, reject);
     if (config?.type === "expiration")
@@ -119,6 +145,7 @@ export const awaitTransactionSignatureConfirmation = async ({
         transactionCommitment,
       });
 
+    // [Step 2] setup websocket connection to verify signature with intitial commitment
     await new Promise(async (innerResolve, _) => {
       let subscriptionId: number | undefined;
       try {
@@ -140,7 +167,9 @@ export const awaitTransactionSignatureConfirmation = async ({
               });
 
               tryInvokeAbort(controller);
-              reject(result.err);
+              reject({
+                err: result.err,
+              });
             } else {
               const isValidConfirmationValue =
                 TRANSACTION_CONFIRMATION_VALUES.includes(
@@ -199,6 +228,8 @@ export const awaitTransactionSignatureConfirmation = async ({
       }
     });
 
+    // [Step 3] start polling signature status if caller requested additional commitment levels
+    // beyond the commitment specified in the above websocket subscription
     const pollingTimeout =
       config?.pollingConfirmationTimeoutMs ?? DEFAULT_POLLING_TIMEOUT;
     while (!signal.aborted) {
@@ -224,7 +255,9 @@ export const awaitTransactionSignatureConfirmation = async ({
             });
 
             tryInvokeAbort(controller);
-            reject(result.err);
+            reject({
+              err: result.err,
+            });
           } else if (!(result.confirmations || result.confirmationStatus)) {
             debug(
               `[REST] result "confirmations" or "confirmationStatus" is null: `,

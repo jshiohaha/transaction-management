@@ -18,15 +18,23 @@ const TRANSACTION_ALREADY_PROCESSED_MESSAGE =
   "This transaction has already been processed";
 
 /**
- * Sends a signed transaction to the Solana blockchain.
+ * Asynchronously sends a signed transaction to the Solana network and invoke a callback function for various lifecycle events.
+ * This function supports both one-time and continuous transaction submissions, with configurable options for sending transactions
+ * such as skipping preflight checks and setting maximum retries.
  *
- * @param signedTransaction - The signed transaction to send.
- * @param connection - The Solana connection object.
- * @param config - (Optional) Configuration options for sending the transaction.
- * @param onTransactionEvent - (Optional) Callback function to handle transaction lifecycle events.
- * @returns A promise that resolves to the transaction ID of the sent transaction.
- * @throws {SignatureError} If there is an error serializing the transaction.
- * @throws {Error} If there is an error sending the transaction.
+ * @param {Object} params - The parameters for sending the transaction.
+ * @param {Transaction | VersionedTransaction} params.signedTransaction - The signed transaction to be sent.
+ * @param {Connection} params.connection - The blockchain connection to use for sending the transaction.
+ * @param {SendTransactionConfig} [params.config] - Optional configuration for transaction sending options,
+ *        including whether to skip preflight checks, the number of maximum retries, the timeout for polling in continuous mode,
+ *        and an AbortController for handling cancellations in continuous mode.
+ * @param {TransactionLifecycleEventCallback} [params.onTransactionEvent] - Optional callback to handle transaction lifecycle events,
+ *        which are invoked with an object containing the type of event, the transaction phase, and the transaction ID.
+ *
+ * @returns {Promise<string>} - A promise that resolves to the transaction ID of the submitted transaction.
+ *
+ * @throws {SignatureError} - Throws an error if there is a signature error in the transaction serialization process.
+ * @throws {Error} - Throws a general error if the transaction fails to send, or if required configurations for continuous sending are missing.
  */
 export const sendSignedTransaction = async ({
   signedTransaction,
