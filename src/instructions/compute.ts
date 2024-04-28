@@ -1,31 +1,43 @@
 import {
-  ComputeBudgetProgram,
-  Connection,
-  TransactionInstruction,
+    ComputeBudgetProgram,
+    Connection,
+    TransactionInstruction,
 } from "@solana/web3.js";
 
 export interface ConstantComputeUnitLimit {
-  type: "constant";
-  value: number;
+    type: "constant";
+    value: number;
 }
 
 export interface DynamicComputeUnitLimit {
-  type: "dynamic";
-  calculateLimit?: () => Promise<number>;
+    type: "dynamic";
+    calculateLimit?: () => Promise<number>;
 }
 
-export const findComputeLimit = async (
-  connection: Connection,
-  instructions: TransactionInstruction[],
-  limitConfig?: ConstantComputeUnitLimit | DynamicComputeUnitLimit,
+// todo: add docstring?
+export const getStaticallyTrackedLimits = async (
+    connection: Connection,
+    instructions: TransactionInstruction[]
 ): Promise<number | undefined> => {
-  if (limitConfig?.type === "constant") {
-    return limitConfig.value;
-  } else if (limitConfig?.type === "dynamic" && limitConfig?.calculateLimit) {
-    return limitConfig.calculateLimit();
-  }
+    // instructions[0].programId -> only consider ix's with a certain value
+    // instructions[0].data -> ix fee
 
-  return undefined;
+    // todo: compute ourselves - look at metadao frontend? return that or undefined
+    return -1;
+};
+
+export const deriveComputeLimit = async (
+    connection: Connection,
+    instructions: TransactionInstruction[],
+    limitConfig?: ConstantComputeUnitLimit | DynamicComputeUnitLimit
+): Promise<number | undefined> => {
+    if (limitConfig?.type === "constant") {
+        return limitConfig.value;
+    } else if (limitConfig?.type === "dynamic" && limitConfig?.calculateLimit) {
+        return limitConfig.calculateLimit();
+    }
+
+    return getStaticallyTrackedLimits(connection, instructions);
 };
 
 /**
@@ -37,11 +49,11 @@ export const findComputeLimit = async (
  * @returns A promise that resolves to a transaction instruction or undefined.
  */
 export const generateComputeLimitInstruction = async (
-  connection: Connection,
-  instructions: TransactionInstruction[],
-  limitConfig?: ConstantComputeUnitLimit | DynamicComputeUnitLimit,
+    connection: Connection,
+    instructions: TransactionInstruction[],
+    limitConfig?: ConstantComputeUnitLimit | DynamicComputeUnitLimit
 ): Promise<TransactionInstruction | undefined> =>
-  findComputeLimit(connection, instructions, limitConfig).then((units) => {
-    if (!units) return undefined;
-    return ComputeBudgetProgram.setComputeUnitLimit({ units });
-  });
+    deriveComputeLimit(connection, instructions, limitConfig).then((units) => {
+        if (!units) return undefined;
+        return ComputeBudgetProgram.setComputeUnitLimit({ units });
+    });

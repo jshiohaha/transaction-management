@@ -36,6 +36,11 @@ export class TransactionBuilder {
         | DynamicComputeUnitLimit
         | undefined = undefined;
 
+    useVersionedTransaction(useVersioned: boolean): TransactionBuilder {
+        this.useVersionedTx = useVersioned;
+        return this;
+    }
+
     setConnection(connection: Connection): TransactionBuilder {
         this.connection = connection;
         return this;
@@ -55,7 +60,6 @@ export class TransactionBuilder {
         return this;
     }
 
-    // add instruction to the beginning of the list
     prependInstruction(
         instruction: TransactionInstruction
     ): TransactionBuilder {
@@ -63,9 +67,26 @@ export class TransactionBuilder {
         return this;
     }
 
-    // add instruction as the `n-th` element in the list
+    prependInstructions(
+        instructions: Array<TransactionInstruction>
+    ): TransactionBuilder {
+        instructions.forEach((instruction) =>
+            this.prependInstruction(instruction)
+        );
+        return this;
+    }
+
     appendInstruction(instruction: TransactionInstruction): TransactionBuilder {
         this.instructions.push(instruction);
+        return this;
+    }
+
+    appendInstructions(
+        instructions: Array<TransactionInstruction>
+    ): TransactionBuilder {
+        instructions.forEach((instruction) =>
+            this.appendInstruction(instruction)
+        );
         return this;
     }
 
@@ -83,11 +104,6 @@ export class TransactionBuilder {
         this.feePayer = feePayer;
         return this;
     }
-
-    //   useVersionedTransaction(useVersioned: boolean): TransactionBuilder {
-    //     this.useVersionedTx = useVersioned;
-    //     return this;
-    //   }
 
     private getConnectionOrThrow = (connection?: Connection) => {
         const _connection = this.connection ?? connection;
